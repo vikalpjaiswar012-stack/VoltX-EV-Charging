@@ -3,115 +3,129 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 import requests
+import random
 
-# --- 1. PAGE SETUP ---
-st.set_page_config(page_title="VoltX EV App", page_icon="⚡", layout="wide")
+# --- 1. PAGE SETUP (Wide Layout for Dashboard) ---
+st.set_page_config(page_title="VoltX EV Dashboard", page_icon="⚡", layout="wide")
 
-# --- 2. DUMMY STATION DATA ---
+# --- 2. DUMMY DATA GENERATION ---
 data = {
-    'Station Name': ['VoltX Acura Hub', 'City Center Fast Charge', 'Greenway Station', 'Tech Park EV', 'Highway Stop 1'],
-    'Lat': [12.985, 12.971, 12.990, 12.960, 12.920],
-    'Lon': [77.550, 77.594, 77.570, 77.580, 77.610],
-    'Available': [True, False, True, True, False],
-    'Charger Type': ['DC', 'AC', 'DC', 'AC', 'DC'],
-    'Wait Time': ['Now', '15 Mins', 'Now', 'Now', '45 Mins'],
-    'Rating': [4.8, 3.5, 4.2, 5.0, 3.9]
+    'Station Name': ['Acura Hub', 'City Center', 'Greenway', 'Tech Park EV', 'Highway Stop 1', 'Mall Hub', 'Airport Fast Charge'],
+    'Lat': [12.985, 12.971, 12.990, 12.960, 12.920, 12.935, 13.198],
+    'Lon': [77.550, 77.594, 77.570, 77.580, 77.610, 77.625, 77.706],
+    'Status': ['Available', 'Occupied', 'Available', 'Available', 'Maintenance', 'Occupied', 'Available'],
+    'Charger Type': ['DC Fast', 'AC Slow', 'DC Fast', 'AC Slow', 'DC Fast', 'AC Slow', 'DC Fast'],
+    'Power (kW)': [50, 22, 150, 11, 50, 22, 150],
+    'Wait Time': ['0 mins', '15 mins', '0 mins', '0 mins', 'Offline', '30 mins', '0 mins'],
+    'Rating': [4.8, 3.5, 4.2, 5.0, 3.9, 4.1, 4.9]
 }
 df = pd.DataFrame(data)
 
-# --- 3. SIDEBAR DASHBOARD ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3586/3586936.png", width=50) 
-st.sidebar.title("⚡ VoltX Filters")
+# Dummy User Location (Bengaluru)
+user_lat, user_lon = 12.9716, 77.5946
 
-# Using coordinates for user location (Bengaluru center)
-user_lat = 12.9716
-user_lon = 77.5946
-st.sidebar.write("📍 **Your Location:** Bengaluru (Dummy GPS)")
+# --- 3. SIDEBAR (GUI Filters) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3586/3586936.png", width=60) 
+    st.title("⚙️ Control Panel")
+    
+    st.subheader("Quick Filters")
+    only_available = st.toggle("🟢 Show Only Available", value=False)
+    autocharge = st.toggle("⚡ Autocharge Enabled", value=False)
+    
+    st.divider()
+    
+    st.subheader("Hardware Filters")
+    charger_type = st.multiselect("Charger Speed", ["AC Slow", "DC Fast"], default=["AC Slow", "DC Fast"])
+    min_power = st.slider("Minimum Power (kW)", 0, 150, 20)
+    
+    st.divider()
+    st.info("📍 Your Location: Bengaluru, India\n\n(Using OpenStreetMap Routing)")
 
-only_available = st.sidebar.toggle("Only available chargers", value=False)
-autocharge = st.sidebar.toggle("Autocharge Support", value=False)
-
-st.sidebar.divider()
-charger_type = st.sidebar.multiselect("Charger Type", ["AC", "DC"], default=["AC", "DC"])
-
-# Filter Logic
+# --- FILTERING LOGIC ---
 filtered_df = df[df['Charger Type'].isin(charger_type)]
+filtered_df = filtered_df[filtered_df['Power (kW)'] >= min_power]
 if only_available:
-    filtered_df = filtered_df[filtered_df['Available'] == True]
+    filtered_df = filtered_df[filtered_df['Status'] == 'Available']
 
-# --- 4. CALCULATE DISTANCES (Open Source OSRM) ---
-distances, durations, nav_links = [], [], []
+# --- 4. DASHBOARD HEADER & METRICS ---
+st.title("🔋 VoltX Command Dashboard")
+st.markdown("Monitor real-time EV charging network status, availability, and routing.")
 
-for index, row in filtered_df.iterrows():
-    # OSRM API expects format: {longitude},{latitude}
-    osrm_url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{row['Lon']},{row['Lat']}?overview=false"
-    
-    try:
-        response = requests.get(osrm_url).json()
-        if response.get("code") == "Ok":
-            # Convert meters to km
-            dist_km = round(response['routes'][0]['distance'] / 1000, 1)
-            # Convert seconds to minutes
-            dur_min = round(response['routes'][0]['duration'] / 60)
-            
-            dist_text = f"{dist_km} km"
-            dur_text = f"{dur_min} mins"
-        else:
-            dist_text, dur_text = "N/A", "N/A"
-    except:
-        dist_text, dur_text = "Error", "Error"
-        
-    distances.append(dist_text)
-    durations.append(dur_text)
-    
-    # Generate OpenStreetMap Navigation Link
-    osm_nav_link = f"https://www.openstreetmap.org/directions?engine=osrm_car&route={user_lat}%2C{user_lon}%3B{row['Lat']}%2C{row['Lon']}"
-    nav_links.append(osm_nav_link)
+# KPI Metric Cards (Gives the "Dashboard" look)
+col1, col2, col3, col4 = st.columns(4)
+col1.metric(label="Total Stations in Area", value=len(df), delta="Active Network")
+col2.metric(label="Currently Available", value=len(df[df['Status'] == 'Available']), delta="Ready to use", delta_color="normal")
+col3.metric(label="Average Power", value=f"{int(filtered_df['Power (kW)'].mean()) if not filtered_df.empty else 0} kW", delta="Network Avg")
+col4.metric(label="Active Users", value="1,284", delta="+14% this week")
 
-filtered_df['Distance'] = distances
-filtered_df['Driving Time'] = durations
-filtered_df['Navigate Link'] = nav_links
+st.divider()
 
-# --- 5. MAIN UI ---
-st.title("🔋 VoltX EV Station Locator")
-st.success("🌍 Powered entirely by OpenStreetMap and OSRM (No API Key Required!)")
-
-tab1, tab2, tab3 = st.tabs(["🗺️ Station Map", "🛣️ Trip Planner", "📍 Generate Lead"])
+# --- 5. MAIN GUI TABS ---
+tab1, tab2, tab3 = st.tabs(["🗺️ Live Map View", "📊 Analytics & Data", "🛣️ Trip Planner"])
 
 with tab1:
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        # Default map center (Folium inherently uses OpenStreetMap)
-        m = folium.Map(location=[user_lat, user_lon], zoom_start=12)
+    map_col, list_col = st.columns([2, 1]) # Map takes 2/3 of screen, list takes 1/3
+    
+    with map_col:
+        st.subheader("Real-Time Availability Map")
+        # Build Folium Map
+        m = folium.Map(location=[user_lat, user_lon], zoom_start=11, tiles="CartoDB positron") # Cleaner map style
         
-        # Add user location pin
-        folium.Marker([user_lat, user_lon], popup="You are here", icon=folium.Icon(color="blue", icon="user")).add_to(m)
+        # User Pin
+        folium.Marker([user_lat, user_lon], popup="You", icon=folium.Icon(color="black", icon="user")).add_to(m)
         
-        # Add station pins
+        # Station Pins
         for i, row in filtered_df.iterrows():
-            color = "green" if row['Available'] else "red"
-            popup_html = f"<b>{row['Station Name']}</b><br>Wait: {row['Wait Time']}<br>Type: {row['Charger Type']}"
-            folium.Marker([row['Lat'], row['Lon']], popup=folium.Popup(popup_html, max_width=200), icon=folium.Icon(color=color, icon="bolt", prefix='fa')).add_to(m)
+            if row['Status'] == 'Available':
+                pin_color = "green"
+            elif row['Status'] == 'Occupied':
+                pin_color = "orange"
+            else:
+                pin_color = "gray"
+                
+            popup_html = f"<b>{row['Station Name']}</b><br>Speed: {row['Power (kW)']} kW<br>Wait: {row['Wait Time']}"
+            folium.Marker([row['Lat'], row['Lon']], popup=folium.Popup(popup_html, max_width=200), icon=folium.Icon(color=pin_color, icon="bolt", prefix='fa')).add_to(m)
         
-        st_folium(m, width=700, height=500)
+        st_folium(m, width="100%", height=500, returned_objects=[])
         
-    with col2:
-        st.subheader("Nearest Stations")
-        st.dataframe(
-            filtered_df[['Station Name', 'Wait Time', 'Distance', 'Navigate Link']],
-            use_container_width=True, hide_index=True,
-            column_config={"Navigate Link": st.column_config.LinkColumn("Navigate", display_text="🗺️ Go")}
-        )
+    with list_col:
+        st.subheader("Quick Actions")
+        # Creating visually appealing cards for the filtered stations
+        for i, row in filtered_df.head(4).iterrows():
+            with st.container(border=True):
+                st.markdown(f"**{row['Station Name']}** ({row['Rating']} ⭐)")
+                status_color = "🟢" if row['Status'] == 'Available' else "🟠" if row['Status'] == 'Occupied' else "⚫"
+                st.markdown(f"{status_color} {row['Status']} | ⚡ {row['Power (kW)']} kW")
+                
+                # OpenStreetMap Link
+                nav_url = f"https://www.openstreetmap.org/directions?engine=osrm_car&route={user_lat}%2C{user_lon}%3B{row['Lat']}%2C{row['Lon']}"
+                st.link_button("🗺️ Navigate (OSM)", nav_url, use_container_width=True)
 
 with tab2:
-    st.subheader("Smart Trip Planner")
-    colA, colB = st.columns(2)
-    start = colA.text_input("Starting Point", "Bengaluru")
-    end = colB.text_input("Destination", "Mysuru")
-    st.button("Calculate Route & Charging Stops", type="primary")
+    st.subheader("Network Analytics")
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        st.markdown("**Charger Type Distribution**")
+        type_counts = df['Charger Type'].value_counts()
+        st.bar_chart(type_counts, color="#1f77b4")
+        
+    with chart_col2:
+        st.markdown("**Station Status Overview**")
+        status_counts = df['Status'].value_counts()
+        st.bar_chart(status_counts, color="#ff7f0e")
+        
+    st.subheader("Raw Data Table")
+    st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
 with tab3:
-    st.subheader("Crowdsource: Generate Lead")
-    st.text_input("Location Name (e.g., Mall Parking Lot)")
-    st.text_area("Why is this a good spot for a fast charger?")
-    st.button("Submit Lead", type="primary")
+    st.subheader("Smart Trip Planner")
+    st.info("Enter your route to automatically calculate charging stops along the way.")
+    col_from, col_to = st.columns(2)
+    start_point = col_from.text_input("From", "Bengaluru, KA")
+    end_point = col_to.text_input("To", "Mysuru, KA")
+    
+    if st.button("Generate Route Plan", type="primary"):
+        st.success(f"Route calculated from {start_point} to {end_point}! Found 3 fast chargers along the highway.")
+        st.progress(100)

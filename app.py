@@ -2,17 +2,10 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
-import googlemaps
+import requests
 
 # --- 1. PAGE SETUP ---
 st.set_page_config(page_title="VoltX EV App", page_icon="⚡", layout="wide")
-
-# Initialize Google Maps API securely
-try:
-    gmaps = googlemaps.Client(key=st.secrets["GOOGLE_MAPS_API_KEY"])
-    api_ready = True
-except Exception:
-    api_ready = False
 
 # --- 2. DUMMY STATION DATA ---
 data = {
@@ -27,10 +20,14 @@ data = {
 df = pd.DataFrame(data)
 
 # --- 3. SIDEBAR DASHBOARD ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3586/3586936.png", width=50) # Generic EV icon
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3586/3586936.png", width=50) 
 st.sidebar.title("⚡ VoltX Filters")
 
-user_loc_input = st.sidebar.text_input("📍 Your Location", "Bengaluru, India")
+# Using coordinates for user location (Bengaluru center)
+user_lat = 12.9716
+user_lon = 77.5946
+st.sidebar.write("📍 **Your Location:** Bengaluru (Dummy GPS)")
+
 only_available = st.sidebar.toggle("Only available chargers", value=False)
 autocharge = st.sidebar.toggle("Autocharge Support", value=False)
 
@@ -42,28 +39,34 @@ filtered_df = df[df['Charger Type'].isin(charger_type)]
 if only_available:
     filtered_df = filtered_df[filtered_df['Available'] == True]
 
-# --- 4. CALCULATE DISTANCES (Google Maps) ---
+# --- 4. CALCULATE DISTANCES (Open Source OSRM) ---
 distances, durations, nav_links = [], [], []
 
 for index, row in filtered_df.iterrows():
-    dest_str = f"{row['Lat']},{row['Lon']}"
+    # OSRM API expects format: {longitude},{latitude}
+    osrm_url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{row['Lon']},{row['Lat']}?overview=false"
     
-    if api_ready:
-        try:
-            result = gmaps.distance_matrix(origins=user_loc_input, destinations=dest_str, mode="driving")
-            dist_text = result['rows'][0]['elements'][0]['distance']['text']
-            dur_text = result['rows'][0]['elements'][0]['duration']['text']
-        except:
-            dist_text, dur_text = "Est. 5 km", "Est. 15 mins"
-    else:
-        dist_text, dur_text = "API Key Needed", "API Key Needed"
+    try:
+        response = requests.get(osrm_url).json()
+        if response.get("code") == "Ok":
+            # Convert meters to km
+            dist_km = round(response['routes'][0]['distance'] / 1000, 1)
+            # Convert seconds to minutes
+            dur_min = round(response['routes'][0]['duration'] / 60)
+            
+            dist_text = f"{dist_km} km"
+            dur_text = f"{dur_min} mins"
+        else:
+            dist_text, dur_text = "N/A", "N/A"
+    except:
+        dist_text, dur_text = "Error", "Error"
         
     distances.append(dist_text)
     durations.append(dur_text)
     
-    # Generate Google Maps Navigation Link
-    url = f"https://www.google.com/maps/dir/?api=1&origin={user_loc_input}&destination={dest_str}&travelmode=driving"
-    nav_links.append(url)
+    # Generate OpenStreetMap Navigation Link
+    osm_nav_link = f"https://www.openstreetmap.org/directions?engine=osrm_car&route={user_lat}%2C{user_lon}%3B{row['Lat']}%2C{row['Lon']}"
+    nav_links.append(osm_nav_link)
 
 filtered_df['Distance'] = distances
 filtered_df['Driving Time'] = durations
@@ -71,17 +74,20 @@ filtered_df['Navigate Link'] = nav_links
 
 # --- 5. MAIN UI ---
 st.title("🔋 VoltX EV Station Locator")
-if not api_ready:
-    st.warning("⚠️ Google Maps API Key missing in Streamlit Secrets. Distances are estimated.")
+st.success("🌍 Powered entirely by OpenStreetMap and OSRM (No API Key Required!)")
 
 tab1, tab2, tab3 = st.tabs(["🗺️ Station Map", "🛣️ Trip Planner", "📍 Generate Lead"])
 
 with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
-        # Default map center
-        m = folium.Map(location=[12.9716, 77.5946], zoom_start=12)
+        # Default map center (Folium inherently uses OpenStreetMap)
+        m = folium.Map(location=[user_lat, user_lon], zoom_start=12)
         
+        # Add user location pin
+        folium.Marker([user_lat, user_lon], popup="You are here", icon=folium.Icon(color="blue", icon="user")).add_to(m)
+        
+        # Add station pins
         for i, row in filtered_df.iterrows():
             color = "green" if row['Available'] else "red"
             popup_html = f"<b>{row['Station Name']}</b><br>Wait: {row['Wait Time']}<br>Type: {row['Charger Type']}"
